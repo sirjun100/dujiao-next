@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/dujiao-next/internal/constants"
 	"github.com/dujiao-next/internal/http/handlers/shared"
 	"github.com/dujiao-next/internal/http/response"
 	"github.com/dujiao-next/internal/models"
@@ -35,6 +36,8 @@ func (h *Handler) GetAdminProducts(c *gin.Context) {
 		return
 	}
 
+	h.applyUpstreamDisplayTypes(products)
+
 	pagination := response.BuildPagination(page, pageSize, total)
 	response.SuccessWithPage(c, products, pagination)
 }
@@ -62,6 +65,9 @@ func (h *Handler) GetAdminProduct(c *gin.Context) {
 		shared.RespondError(c, response.CodeInternal, "error.product_fetch_failed", err)
 		return
 	}
+	*product = temp[0]
+
+	h.applyUpstreamDisplayTypes(temp)
 	*product = temp[0]
 
 	response.Success(c, product)
@@ -249,6 +255,93 @@ func (h *Handler) UpdateProduct(c *gin.Context) {
 	}
 
 	response.Success(c, product)
+}
+
+// applyUpstreamDisplayTypes 将 upstream 类型商品的 FulfillmentType 替换为上游的实际交付类型，并填充库存字段
+func (h *Handler) applyUpstreamDisplayTypes(products []models.Product) {
+	var upstreamIDs []uint
+	idxMap := make(map[uint]int) // localProductID -> products slice index
+	for i := range products {
+		if products[i].FulfillmentType == constants.FulfillmentTypeUpstream {
+			upstreamIDs = append(upstreamIDs, products[i].ID)
+			idxMap[products[i].ID] = i
+		}
+	}
+	if len(upstreamIDs) == 0 {
+		return
+	}
+
+	mappings, err := h.ProductMappingRepo.ListByLocalProductIDs(upstreamIDs)
+	if err != nil || len(mappings) == 0 {
+		return
+	}
+
+	for _, mp := range mappings {
+		idx, ok := idxMap[mp.LocalProductID]
+		if !ok {
+			continue
+		}
+		p := &products[idx]
+
+		displayType := mp.UpstreamFulfillmentType
+		if displayType != constants.FulfillmentTypeAuto {
+			displayType = constants.FulfillmentTypeManual
+		}
+		p.FulfillmentType = displayType
+
+		// 获取 SKU 映射以填充库存字段
+		skuMappings, err := h.SKUMappingRepo.ListByProductMapping(mp.ID)
+		if err != nil || len(skuMappings) == 0 {
+			continue
+		}
+
+		skuMappingByLocal := make(map[uint]*models.SKUMapping, len(skuMappings))
+		for i := range skuMappings {
+			skuMappingByLocal[skuMappings[i].LocalSKUID] = &skuMappings[i]
+		}
+
+		var totalStock int64
+		hasUnlimited := false
+
+		for j := range p.SKUs {
+			sku := &p.SKUs[j]
+			sm, found := skuMappingByLocal[sku.ID]
+			if !found || !sm.UpstreamIsActive {
+				continue
+			}
+
+			if sm.UpstreamStock == -1 {
+				hasUnlimited = true
+			} else {
+				totalStock += int64(sm.UpstreamStock)
+			}
+
+			if displayType == constants.FulfillmentTypeAuto {
+				sku.AutoStockAvailable = int64(sm.UpstreamStock)
+				if sm.UpstreamStock > 0 {
+					sku.AutoStockTotal = int64(sm.UpstreamStock)
+				}
+			} else {
+				sku.ManualStockTotal = sm.UpstreamStock
+			}
+		}
+
+		// 填充商品级汇总库存
+		if displayType == constants.FulfillmentTypeAuto {
+			if hasUnlimited {
+				p.AutoStockAvailable = -1
+			} else {
+				p.AutoStockAvailable = totalStock
+				p.AutoStockTotal = totalStock
+			}
+		} else {
+			if hasUnlimited {
+				p.ManualStockTotal = constants.ManualStockUnlimited
+			} else {
+				p.ManualStockTotal = int(totalStock)
+			}
+		}
+	}
 }
 
 // DeleteProduct 删除商品（软删除）

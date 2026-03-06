@@ -185,14 +185,21 @@ func (s *ProductMappingService) ImportUpstreamProduct(connectionID uint, upstrea
 		return nil, err
 	}
 
+	// 确定上游原始交付类型（auto/manual）
+	upstreamFulfillmentType := upProduct.FulfillmentType
+	if upstreamFulfillmentType != constants.FulfillmentTypeAuto {
+		upstreamFulfillmentType = constants.FulfillmentTypeManual
+	}
+
 	// 创建 ProductMapping
 	now := time.Now()
 	mapping := &models.ProductMapping{
-		ConnectionID:      connectionID,
-		LocalProductID:    product.ID,
-		UpstreamProductID: upstreamProductID,
-		IsActive:          true,
-		LastSyncedAt:      &now,
+		ConnectionID:            connectionID,
+		LocalProductID:          product.ID,
+		UpstreamProductID:       upstreamProductID,
+		UpstreamFulfillmentType: upstreamFulfillmentType,
+		IsActive:                true,
+		LastSyncedAt:            &now,
 	}
 	if err := s.mappingRepo.Create(mapping); err != nil {
 		return nil, fmt.Errorf("create product mapping: %w", err)
@@ -233,12 +240,15 @@ func (s *ProductMappingService) createSKUMappings(mappingID uint, localSKUs []mo
 		}
 
 		upPrice, _ := decimal.NewFromString(upSKU.PriceAmount)
+		now := time.Now()
 		skuMapping := &models.SKUMapping{
 			ProductMappingID: mappingID,
 			LocalSKUID:       localSKU.ID,
 			UpstreamSKUID:    upSKU.ID,
 			UpstreamPrice:    models.NewMoneyFromDecimal(upPrice.Round(2)),
 			UpstreamIsActive: upSKU.IsActive,
+			UpstreamStock:    upSKU.StockQuantity,
+			StockSyncedAt:    &now,
 		}
 		if err := s.skuMappingRepo.Create(skuMapping); err != nil {
 			return err
@@ -472,7 +482,12 @@ func (s *ProductMappingService) SyncProduct(mappingID uint) error {
 		_ = s.skuMappingRepo.Create(newMapping)
 	}
 
-	// ── 3. 更新同步时间 ──
+	// ── 3. 更新同步时间 + 上游交付类型 ──
+	upFulfillment := upProduct.FulfillmentType
+	if upFulfillment != constants.FulfillmentTypeAuto {
+		upFulfillment = constants.FulfillmentTypeManual
+	}
+	mapping.UpstreamFulfillmentType = upFulfillment
 	mapping.LastSyncedAt = &now
 	return s.mappingRepo.Update(mapping)
 }

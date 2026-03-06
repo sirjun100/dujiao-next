@@ -8,15 +8,16 @@ import (
 
 // ProductMapping 商品映射表
 type ProductMapping struct {
-	ID                uint           `gorm:"primarykey" json:"id"`
-	ConnectionID      uint           `gorm:"index;not null" json:"connection_id"`
-	LocalProductID    uint           `gorm:"uniqueIndex;not null" json:"local_product_id"`
-	UpstreamProductID uint           `gorm:"not null" json:"upstream_product_id"`
-	IsActive          bool           `gorm:"not null;default:true" json:"is_active"`
-	LastSyncedAt      *time.Time     `json:"last_synced_at,omitempty"`
-	CreatedAt         time.Time      `gorm:"index" json:"created_at"`
-	UpdatedAt         time.Time      `gorm:"index" json:"updated_at"`
-	DeletedAt         gorm.DeletedAt `gorm:"index" json:"-"`
+	ID                      uint           `gorm:"primarykey" json:"id"`
+	ConnectionID            uint           `gorm:"index;not null" json:"connection_id"`
+	LocalProductID          uint           `gorm:"uniqueIndex;not null" json:"local_product_id"`
+	UpstreamProductID       uint           `gorm:"not null" json:"upstream_product_id"`
+	UpstreamFulfillmentType string         `gorm:"type:varchar(20);not null;default:'manual'" json:"upstream_fulfillment_type"` // 上游原始交付类型（auto/manual）
+	IsActive                bool           `gorm:"not null;default:true" json:"is_active"`
+	LastSyncedAt            *time.Time     `json:"last_synced_at,omitempty"`
+	CreatedAt               time.Time      `gorm:"index" json:"created_at"`
+	UpdatedAt               time.Time      `gorm:"index" json:"updated_at"`
+	DeletedAt               gorm.DeletedAt `gorm:"index" json:"-"`
 
 	Connection *SiteConnection `gorm:"foreignKey:ConnectionID" json:"connection,omitempty"`
 	Product    *Product        `gorm:"foreignKey:LocalProductID" json:"product,omitempty"`

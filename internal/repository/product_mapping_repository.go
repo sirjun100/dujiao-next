@@ -19,6 +19,7 @@ type ProductMappingRepository interface {
 	List(filter ProductMappingListFilter) ([]models.ProductMapping, int64, error)
 	ListActiveByConnection(connectionID uint) ([]models.ProductMapping, error)
 	ListAllActive() ([]models.ProductMapping, error)
+	ListByLocalProductIDs(productIDs []uint) ([]models.ProductMapping, error)
 }
 
 // ProductMappingListFilter 映射列表筛选
@@ -118,6 +119,17 @@ func (r *GormProductMappingRepository) ListActiveByConnection(connectionID uint)
 func (r *GormProductMappingRepository) ListAllActive() ([]models.ProductMapping, error) {
 	var mappings []models.ProductMapping
 	if err := r.db.Where("is_active = ?", true).Preload("Connection").Find(&mappings).Error; err != nil {
+		return nil, err
+	}
+	return mappings, nil
+}
+
+func (r *GormProductMappingRepository) ListByLocalProductIDs(productIDs []uint) ([]models.ProductMapping, error) {
+	if len(productIDs) == 0 {
+		return nil, nil
+	}
+	var mappings []models.ProductMapping
+	if err := r.db.Where("local_product_id IN ?", productIDs).Find(&mappings).Error; err != nil {
 		return nil, err
 	}
 	return mappings, nil

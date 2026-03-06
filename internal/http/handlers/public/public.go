@@ -198,10 +198,6 @@ func (h *Handler) decoratePublicProduct(product *models.Product, promotionServic
 	}
 
 	item := PublicProductView{Product: *product}
-	// 前台不暴露 upstream 交付类型，对用户显示为 manual
-	if item.Product.FulfillmentType == constants.FulfillmentTypeUpstream {
-		item.Product.FulfillmentType = constants.FulfillmentTypeManual
-	}
 	displayPrice := resolvePublicDisplayPrice(product)
 	item.Product.PriceAmount = displayPrice
 	h.decorateProductStock(product, &item)
@@ -359,10 +355,18 @@ func (h *Handler) decorateUpstreamStock(product *models.Product, item *PublicPro
 	mapping, err := h.ProductMappingRepo.GetByLocalProductID(product.ID)
 	if err != nil || mapping == nil {
 		// 没有映射记录，降级为显示有库存（避免误售罄）
+		item.Product.FulfillmentType = constants.FulfillmentTypeManual
 		item.StockStatus = constants.ProductStockStatusInStock
 		item.IsSoldOut = false
 		return
 	}
+
+	// 根据上游原始交付类型设置展示类型：auto 还是 manual
+	displayType := mapping.UpstreamFulfillmentType
+	if displayType != constants.FulfillmentTypeAuto {
+		displayType = constants.FulfillmentTypeManual
+	}
+	item.Product.FulfillmentType = displayType
 
 	// 获取该映射下的所有 SKU 映射
 	skuMappings, err := h.SKUMappingRepo.ListByProductMapping(mapping.ID)
@@ -392,6 +396,22 @@ func (h *Handler) decorateUpstreamStock(product *models.Product, item *PublicPro
 		}
 		hasActiveMapping = true
 		sku.UpstreamStock = sm.UpstreamStock
+
+		// 根据展示类型填充对应的库存字段，让前端详情页的库存判断逻辑正确工作
+		if displayType == constants.FulfillmentTypeAuto {
+			if sm.UpstreamStock == -1 {
+				sku.AutoStockAvailable = -1 // 前端对 auto 类型 -1 不做特殊处理，但总量为负时不限购
+			} else {
+				sku.AutoStockAvailable = int64(sm.UpstreamStock)
+			}
+		} else {
+			if sm.UpstreamStock == -1 {
+				sku.ManualStockTotal = constants.ManualStockUnlimited
+			} else {
+				sku.ManualStockTotal = sm.UpstreamStock
+			}
+		}
+
 		if sm.UpstreamStock == -1 {
 			hasUnlimited = true
 		} else {
@@ -406,9 +426,20 @@ func (h *Handler) decorateUpstreamStock(product *models.Product, item *PublicPro
 	}
 
 	if hasUnlimited {
+		if displayType == constants.FulfillmentTypeAuto {
+			item.AutoStockAvailable = -1
+		} else {
+			item.ManualStockAvailable = constants.ManualStockUnlimited
+		}
 		item.StockStatus = constants.ProductStockStatusUnlimited
 		item.IsSoldOut = false
 		return
+	}
+
+	if displayType == constants.FulfillmentTypeAuto {
+		item.AutoStockAvailable = int64(totalStock)
+	} else {
+		item.ManualStockAvailable = totalStock
 	}
 
 	switch {
