@@ -68,6 +68,15 @@ func registerPeriodicTasks(scheduler *asynq.Scheduler, consumer *Consumer) {
 			logger.Infow("scheduler_register_upstream_sync_stock_ok", "entry_id", entryID)
 		}
 	}
+	if consumer.ProcurementOrderService != nil {
+		task := queue.NewProcurementSyncAcceptedTask()
+		entryID, err := scheduler.Register("@every 30m", task, asynq.Queue(queue.DefaultQueue))
+		if err != nil {
+			logger.Warnw("scheduler_register_procurement_sync_accepted_failed", "error", err)
+		} else {
+			logger.Infow("scheduler_register_procurement_sync_accepted_ok", "entry_id", entryID)
+		}
+	}
 }
 
 // Name 服务名称

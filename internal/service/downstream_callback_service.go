@@ -68,18 +68,38 @@ func (s *DownstreamCallbackService) GetByOrderID(orderID uint) (*models.Downstre
 // EnqueueCallback 当 B 侧订单状态变更时，检查是否需要回调下游
 func (s *DownstreamCallbackService) EnqueueCallback(orderID uint) {
 	if s.queueClient == nil {
+		logger.Debugw("downstream_callback_skip_no_queue", "order_id", orderID)
 		return
 	}
 	ref, err := s.refRepo.GetByOrderID(orderID)
 	if err != nil || ref == nil {
-		return
+		// 子订单没有 ref，尝试通过父订单查找
+		order, orderErr := s.orderRepo.GetByID(orderID)
+		if orderErr != nil || order == nil || order.ParentID == nil {
+			logger.Debugw("downstream_callback_skip_no_ref", "order_id", orderID, "error", err)
+			return
+		}
+		ref, err = s.refRepo.GetByOrderID(*order.ParentID)
+		if err != nil || ref == nil {
+			logger.Debugw("downstream_callback_skip_no_ref", "order_id", orderID, "parent_id", *order.ParentID, "error", err)
+			return
+		}
+		logger.Debugw("downstream_callback_resolved_parent_ref", "order_id", orderID, "parent_id", *order.ParentID, "ref_id", ref.ID)
 	}
 	if strings.TrimSpace(ref.CallbackURL) == "" {
+		logger.Warnw("downstream_callback_skip_empty_url", "order_id", orderID, "ref_id", ref.ID)
 		return
 	}
-	if ref.CallbackStatus == constants.CallbackStatusSent {
-		// 已发送过，可能需要重新发送（订单状态再次变更）
+	logger.Infow("downstream_callback_enqueue",
+		"order_id", orderID,
+		"ref_id", ref.ID,
+		"callback_url", ref.CallbackURL,
+		"callback_status", ref.CallbackStatus,
+	)
+	if ref.CallbackStatus != constants.CallbackStatusPending {
+		// 重新发送：重置状态和重试计数
 		ref.CallbackStatus = constants.CallbackStatusPending
+		ref.CallbackRetryCount = 0
 		_ = s.refRepo.Update(ref)
 	}
 	if err := s.queueClient.EnqueueDownstreamCallback(queue.DownstreamCallbackPayload{
@@ -137,15 +157,27 @@ func (s *DownstreamCallbackService) SendCallback(refID uint) error {
 		event = "order.fulfilled"
 	}
 
-	var fulfillment *upstream.UpstreamFulfillment
-	if order.Fulfillment != nil && order.Fulfillment.Status == constants.FulfillmentStatusDelivered {
-		fulfillment = &upstream.UpstreamFulfillment{
-			Type:    order.Fulfillment.Type,
-			Status:  order.Fulfillment.Status,
-			Payload: order.Fulfillment.Payload,
+	// 获取交付信息：优先使用订单自身的 fulfillment，否则从子订单中获取
+	sourceFulfillment := order.Fulfillment
+	if sourceFulfillment == nil && len(order.Children) > 0 {
+		for i := range order.Children {
+			if order.Children[i].Fulfillment != nil {
+				sourceFulfillment = order.Children[i].Fulfillment
+				break
+			}
 		}
-		if order.Fulfillment.DeliveredAt != nil {
-			fulfillment.DeliveredAt = order.Fulfillment.DeliveredAt
+	}
+
+	var fulfillment *upstream.UpstreamFulfillment
+	if sourceFulfillment != nil && sourceFulfillment.Status == constants.FulfillmentStatusDelivered {
+		fulfillment = &upstream.UpstreamFulfillment{
+			Type:         sourceFulfillment.Type,
+			Status:       sourceFulfillment.Status,
+			Payload:      sourceFulfillment.Payload,
+			DeliveryData: sourceFulfillment.LogisticsJSON,
+		}
+		if sourceFulfillment.DeliveredAt != nil {
+			fulfillment.DeliveredAt = sourceFulfillment.DeliveredAt
 		}
 	}
 
@@ -170,6 +202,15 @@ func (s *DownstreamCallbackService) SendCallback(refID uint) error {
 	signature := upstream.Sign(credential.ApiSecret, "POST", "/api/v1/upstream/callback", timestamp, bodyBytes)
 
 	// 发送请求
+	logger.Infow("downstream_callback_sending",
+		"ref_id", ref.ID,
+		"order_id", order.ID,
+		"callback_url", ref.CallbackURL,
+		"event", event,
+		"status", order.Status,
+		"has_fulfillment", fulfillment != nil,
+	)
+
 	httpReq, err := http.NewRequest("POST", ref.CallbackURL, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return err
@@ -181,6 +222,11 @@ func (s *DownstreamCallbackService) SendCallback(refID uint) error {
 
 	resp, err := s.httpClient.Do(httpReq)
 	if err != nil {
+		logger.Warnw("downstream_callback_http_error",
+			"ref_id", ref.ID,
+			"callback_url", ref.CallbackURL,
+			"error", err,
+		)
 		return s.handleCallbackFailure(ref, &now, err)
 	}
 	defer resp.Body.Close()

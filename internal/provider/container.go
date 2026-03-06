@@ -256,4 +256,5 @@ func (c *Container) initServices() {
 	c.PaymentService.SetProcurementService(c.ProcurementOrderService)
 	c.PaymentService.SetDownstreamCallbackService(c.DownstreamCallbackService)
 	c.FulfillmentService.SetDownstreamCallbackService(c.DownstreamCallbackService)
+	c.ProcurementOrderService.SetDownstreamCallbackService(c.DownstreamCallbackService)
 }

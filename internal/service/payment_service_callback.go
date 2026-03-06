@@ -511,6 +511,8 @@ func (s *PaymentService) enqueueOrderPaidAsync(order *models.Order, payment *mod
 		}
 		// 上游采购：为包含上游交付类型的订单创建采购单
 		s.enqueueProcurementAsync(order, log)
+		// B 侧：订单支付成功后检查是否需要回调下游
+		s.enqueueDownstreamCallbackAsync(order, log)
 		return
 	}
 	if order.Status == constants.OrderStatusFulfilling {

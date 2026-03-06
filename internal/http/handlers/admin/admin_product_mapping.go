@@ -71,8 +71,8 @@ func (h *Handler) GetProductMapping(c *gin.Context) {
 type ImportUpstreamProductRequest struct {
 	ConnectionID      uint   `json:"connection_id" binding:"required"`
 	UpstreamProductID uint   `json:"upstream_product_id" binding:"required"`
-	CategoryID        uint   `json:"category_id" binding:"required"`
-	Slug              string `json:"slug" binding:"required"`
+	CategoryID        uint   `json:"category_id"`
+	Slug              string `json:"slug"`
 }
 
 // ImportUpstreamProduct 导入上游商品
@@ -111,6 +111,57 @@ func (h *Handler) ImportUpstreamProduct(c *gin.Context) {
 	}
 
 	response.Success(c, mapping)
+}
+
+// BatchImportUpstreamProductRequest 批量导入上游商品请求
+type BatchImportUpstreamProductRequest struct {
+	ConnectionID       uint   `json:"connection_id" binding:"required"`
+	UpstreamProductIDs []uint `json:"upstream_product_ids" binding:"required,min=1"`
+	CategoryID         uint   `json:"category_id"`
+}
+
+// BatchImportUpstreamProductResult 单个商品导入结果
+type BatchImportUpstreamProductResult struct {
+	UpstreamProductID uint   `json:"upstream_product_id"`
+	Success           bool   `json:"success"`
+	Error             string `json:"error,omitempty"`
+}
+
+// BatchImportUpstreamProducts 批量导入上游商品
+func (h *Handler) BatchImportUpstreamProducts(c *gin.Context) {
+	var req BatchImportUpstreamProductRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		shared.RespondError(c, response.CodeBadRequest, "error.bad_request", err)
+		return
+	}
+
+	results := make([]BatchImportUpstreamProductResult, len(req.UpstreamProductIDs))
+	successCount := 0
+
+	for i, upstreamProductID := range req.UpstreamProductIDs {
+		result := BatchImportUpstreamProductResult{
+			UpstreamProductID: upstreamProductID,
+		}
+		_, err := h.ProductMappingService.ImportUpstreamProduct(
+			req.ConnectionID,
+			upstreamProductID,
+			req.CategoryID,
+			"", // auto-generate slug
+		)
+		if err != nil {
+			result.Error = err.Error()
+		} else {
+			result.Success = true
+			successCount++
+		}
+		results[i] = result
+	}
+
+	response.Success(c, gin.H{
+		"results":       results,
+		"total":         len(req.UpstreamProductIDs),
+		"success_count": successCount,
+	})
 }
 
 // SyncProductMapping 同步商品映射

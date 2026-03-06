@@ -20,6 +20,9 @@ type ApiCredential struct {
 	CreatedAt    time.Time      `gorm:"index" json:"created_at"`
 	UpdatedAt    time.Time      `gorm:"index" json:"updated_at"`
 	DeletedAt    gorm.DeletedAt `gorm:"index" json:"-"`
+
+	// 关联
+	User *User `gorm:"foreignKey:UserID" json:"user,omitempty"`
 }
 
 // TableName 指定表名

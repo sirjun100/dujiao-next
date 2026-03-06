@@ -284,6 +284,7 @@ const (
 	TaskAffiliateConfirmCommissions = "affiliate:confirm_commissions"
 	TaskProcurementSubmit           = "procurement:submit"
 	TaskProcurementPollStatus       = "procurement:poll_status"
+	TaskProcurementSyncAccepted     = "procurement:sync_accepted"
 	TaskUpstreamSyncProducts        = "upstream:sync_products"
 	TaskUpstreamSyncStock           = "upstream:sync_stock"
 	TaskReconciliationRun           = "reconciliation:run"

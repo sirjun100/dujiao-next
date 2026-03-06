@@ -44,6 +44,7 @@ func (c *Consumer) Register(mux *asynq.ServeMux) {
 	mux.HandleFunc(queue.TaskUpstreamSyncStock, c.handleUpstreamSyncStock)
 	mux.HandleFunc(queue.TaskProcurementSubmit, c.handleProcurementSubmit)
 	mux.HandleFunc(queue.TaskProcurementPollStatus, c.handleProcurementPollStatus)
+	mux.HandleFunc(queue.TaskProcurementSyncAccepted, c.handleProcurementSyncAccepted)
 	mux.HandleFunc(queue.TaskDownstreamCallback, c.handleDownstreamCallback)
 	mux.HandleFunc(queue.TaskReconciliationRun, c.handleReconciliationRun)
 }
@@ -334,6 +335,15 @@ func (c *Consumer) handleProcurementPollStatus(_ context.Context, task *asynq.Ta
 		)
 		return err
 	}
+	return nil
+}
+
+func (c *Consumer) handleProcurementSyncAccepted(_ context.Context, _ *asynq.Task) error {
+	if c == nil || c.ProcurementOrderService == nil {
+		logger.Debugw("worker_procurement_sync_accepted_skip_nil")
+		return nil
+	}
+	c.ProcurementOrderService.SyncAcceptedOrders()
 	return nil
 }
 

@@ -22,6 +22,8 @@ type ApiCredentialRepository interface {
 // ApiCredentialListFilter 凭证列表筛选
 type ApiCredentialListFilter struct {
 	Status string
+	UserID uint
+	Search string // 按邮箱或昵称搜索
 	Pagination
 }
 
@@ -95,17 +97,26 @@ func (r *GormApiCredentialRepository) List(filter ApiCredentialListFilter) ([]mo
 	if filter.Status != "" {
 		q = q.Where("status = ?", filter.Status)
 	}
+	if filter.UserID > 0 {
+		q = q.Where("user_id = ?", filter.UserID)
+	}
+	if filter.Search != "" {
+		// 按邮箱或昵称搜索：需要 JOIN users 表
+		q = q.Joins("JOIN users ON users.id = api_credentials.user_id").
+			Where("users.email LIKE ? OR users.display_name LIKE ?",
+				"%"+filter.Search+"%", "%"+filter.Search+"%")
+	}
 
 	if err := q.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
 
-	q = q.Order("created_at DESC")
+	q = q.Order("api_credentials.created_at DESC")
 	if filter.Page > 0 && filter.PageSize > 0 {
 		q = q.Offset((filter.Page - 1) * filter.PageSize).Limit(filter.PageSize)
 	}
 
-	if err := q.Find(&creds).Error; err != nil {
+	if err := q.Preload("User").Find(&creds).Error; err != nil {
 		return nil, 0, err
 	}
 

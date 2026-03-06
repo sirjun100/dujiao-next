@@ -27,6 +27,8 @@ const (
 	TaskProcurementSubmit = constants.TaskProcurementSubmit
 	// TaskProcurementPollStatus 采购状态轮询任务
 	TaskProcurementPollStatus = constants.TaskProcurementPollStatus
+	// TaskProcurementSyncAccepted 采购单定时巡检任务
+	TaskProcurementSyncAccepted = constants.TaskProcurementSyncAccepted
 	// TaskDownstreamCallback 下游回调通知任务
 	TaskDownstreamCallback = constants.TaskDownstreamCallback
 	// TaskReconciliationRun 对账执行任务
@@ -117,6 +119,11 @@ func NewAffiliateConfirmCommissionsTask() *asynq.Task {
 // NewUpstreamSyncStockTask 创建上游库存同步任务
 func NewUpstreamSyncStockTask() *asynq.Task {
 	return asynq.NewTask(TaskUpstreamSyncStock, nil)
+}
+
+// NewProcurementSyncAcceptedTask 创建采购单定时巡检任务
+func NewProcurementSyncAcceptedTask() *asynq.Task {
+	return asynq.NewTask(TaskProcurementSyncAccepted, nil)
 }
 
 // ProcurementSubmitPayload 采购提交任务载荷

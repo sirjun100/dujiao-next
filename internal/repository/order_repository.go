@@ -216,7 +216,7 @@ func (r *GormOrderRepository) ListAdmin(filter OrderListFilter) ([]models.Order,
 
 	query = applyPagination(query, filter.Page, filter.PageSize)
 
-	query = r.withChildren(query.Preload("Items"))
+	query = r.withChildren(query.Preload("Items").Preload("Fulfillment"))
 	if err := query.Order("id desc").Find(&orders).Error; err != nil {
 		return nil, 0, err
 	}
@@ -251,7 +251,7 @@ func (r *GormOrderRepository) ListByUser(filter OrderListFilter) ([]models.Order
 
 	query = applyPagination(query, filter.Page, filter.PageSize)
 
-	query = r.withChildren(query.Preload("Items"))
+	query = r.withChildren(query.Preload("Items").Preload("Fulfillment"))
 	if err := query.Order("id desc").Find(&orders).Error; err != nil {
 		return nil, 0, err
 	}
@@ -268,7 +268,7 @@ func (r *GormOrderRepository) ListByGuest(email, password string, page, pageSize
 	}
 
 	var orders []models.Order
-	query := r.withChildren(r.db.Preload("Items"))
+	query := r.withChildren(r.db.Preload("Items").Preload("Fulfillment"))
 	if err := query.
 		Where("user_id = 0 AND guest_email = ? AND guest_password = ? AND parent_id IS NULL", email, password).
 		Order("id desc").

@@ -264,6 +264,12 @@ func (h *Handler) decorateProductStock(product *models.Product, item *PublicProd
 		fulfillmentType = constants.FulfillmentTypeManual
 	}
 
+	// upstream 类型：根据 SKU 映射中的上游库存判断
+	if fulfillmentType == constants.FulfillmentTypeUpstream {
+		h.decorateUpstreamStock(product, item)
+		return
+	}
+
 	if fulfillmentType == constants.FulfillmentTypeManual {
 		hasActiveSKU := false
 		hasUnlimitedSKU := false
@@ -337,6 +343,75 @@ func (h *Handler) decorateProductStock(product *models.Product, item *PublicProd
 		item.StockStatus = constants.ProductStockStatusOutOfStock
 		item.IsSoldOut = true
 	case autoAvailable <= int64(publicLowStockLimit):
+		item.StockStatus = constants.ProductStockStatusLowStock
+	default:
+		item.StockStatus = constants.ProductStockStatusInStock
+	}
+}
+
+// decorateUpstreamStock 根据 SKU 映射的上游库存信息填充商品及 SKU 级库存状态
+func (h *Handler) decorateUpstreamStock(product *models.Product, item *PublicProductView) {
+	// 通过本地商品 ID 查找 product mapping
+	mapping, err := h.ProductMappingRepo.GetByLocalProductID(product.ID)
+	if err != nil || mapping == nil {
+		// 没有映射记录，降级为显示有库存（避免误售罄）
+		item.StockStatus = constants.ProductStockStatusInStock
+		item.IsSoldOut = false
+		return
+	}
+
+	// 获取该映射下的所有 SKU 映射
+	skuMappings, err := h.SKUMappingRepo.ListByProductMapping(mapping.ID)
+	if err != nil || len(skuMappings) == 0 {
+		item.StockStatus = constants.ProductStockStatusInStock
+		item.IsSoldOut = false
+		return
+	}
+
+	// 按本地 SKU ID 索引映射
+	skuMappingByLocal := make(map[uint]*models.SKUMapping, len(skuMappings))
+	for i := range skuMappings {
+		skuMappingByLocal[skuMappings[i].LocalSKUID] = &skuMappings[i]
+	}
+
+	// 填充每个 SKU 的上游库存，同时汇总商品级状态
+	hasUnlimited := false
+	totalStock := 0
+	hasActiveMapping := false
+
+	for i := range item.Product.SKUs {
+		sku := &item.Product.SKUs[i]
+		sm, ok := skuMappingByLocal[sku.ID]
+		if !ok || !sm.UpstreamIsActive {
+			sku.UpstreamStock = 0
+			continue
+		}
+		hasActiveMapping = true
+		sku.UpstreamStock = sm.UpstreamStock
+		if sm.UpstreamStock == -1 {
+			hasUnlimited = true
+		} else {
+			totalStock += sm.UpstreamStock
+		}
+	}
+
+	if !hasActiveMapping {
+		item.StockStatus = constants.ProductStockStatusOutOfStock
+		item.IsSoldOut = true
+		return
+	}
+
+	if hasUnlimited {
+		item.StockStatus = constants.ProductStockStatusUnlimited
+		item.IsSoldOut = false
+		return
+	}
+
+	switch {
+	case totalStock <= 0:
+		item.StockStatus = constants.ProductStockStatusOutOfStock
+		item.IsSoldOut = true
+	case totalStock <= publicLowStockLimit:
 		item.StockStatus = constants.ProductStockStatusLowStock
 	default:
 		item.StockStatus = constants.ProductStockStatusInStock

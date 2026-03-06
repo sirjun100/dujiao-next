@@ -18,9 +18,13 @@ func (h *Handler) GetApiCredentials(c *gin.Context) {
 	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
 	page, pageSize = shared.NormalizePagination(page, pageSize)
 	status := c.Query("status")
+	search := c.Query("search")
+	userID, _ := strconv.ParseUint(c.Query("user_id"), 10, 64)
 
 	creds, total, err := h.ApiCredentialService.List(repository.ApiCredentialListFilter{
 		Status: status,
+		UserID: uint(userID),
+		Search: search,
 		Pagination: repository.Pagination{
 			Page:     page,
 			PageSize: pageSize,
@@ -64,7 +68,7 @@ func (h *Handler) ApproveApiCredential(c *gin.Context) {
 		return
 	}
 
-	cred, secret, err := h.ApiCredentialService.Approve(uint(id))
+	cred, _, err := h.ApiCredentialService.Approve(uint(id))
 	if err != nil {
 		if errors.Is(err, service.ErrApiCredentialNotFound) {
 			shared.RespondError(c, response.CodeNotFound, "error.api_credential_not_found", nil)
@@ -76,8 +80,7 @@ func (h *Handler) ApproveApiCredential(c *gin.Context) {
 
 	response.Success(c, gin.H{
 		"credential": cred,
-		"api_key":    cred.ApiKey,
-		"api_secret": secret,
+		"approved":   true,
 	})
 }
 

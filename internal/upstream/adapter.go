@@ -34,6 +34,7 @@ type ProductListResult struct {
 // UpstreamProduct 上游商品信息
 type UpstreamProduct struct {
 	ID               uint          `json:"id"`
+	SeoMeta          models.JSON   `json:"seo_meta"`
 	Title            models.JSON   `json:"title"`
 	Description      models.JSON   `json:"description"`
 	Content          models.JSON   `json:"content"`
@@ -50,12 +51,13 @@ type UpstreamProduct struct {
 
 // UpstreamSKU 上游 SKU 信息
 type UpstreamSKU struct {
-	ID          uint        `json:"id"`
-	SKUCode     string      `json:"sku_code"`
-	SpecValues  models.JSON `json:"spec_values"`
-	PriceAmount string      `json:"price_amount"`
-	StockStatus string      `json:"stock_status"`
-	IsActive    bool        `json:"is_active"`
+	ID            uint        `json:"id"`
+	SKUCode       string      `json:"sku_code"`
+	SpecValues    models.JSON `json:"spec_values"`
+	PriceAmount   string      `json:"price_amount"`
+	StockStatus   string      `json:"stock_status"`
+	StockQuantity int         `json:"stock_quantity"` // 实际可用库存（-1=无限）
+	IsActive      bool        `json:"is_active"`
 }
 
 // CreateUpstreamOrderReq 创建上游采购单请求

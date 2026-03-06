@@ -119,28 +119,32 @@ func (h *Handler) Ping(c *gin.Context) {
 
 // upstreamProduct 上游商品响应格式
 type upstreamProduct struct {
-	ID              uint               `json:"id"`
-	Slug            string             `json:"slug"`
-	Title           models.JSON        `json:"title"`
-	Description     models.JSON        `json:"description"`
-	Images          models.StringArray `json:"images"`
-	Tags            models.StringArray `json:"tags"`
-	PriceAmount     string             `json:"price_amount"`
-	FulfillmentType string             `json:"fulfillment_type"`
-	IsActive        bool               `json:"is_active"`
-	CategoryID      uint               `json:"category_id"`
-	SKUs            []upstreamSKU      `json:"skus"`
-	CreatedAt       time.Time          `json:"created_at"`
-	UpdatedAt       time.Time          `json:"updated_at"`
+	ID               uint               `json:"id"`
+	Slug             string             `json:"slug"`
+	SeoMeta          models.JSON        `json:"seo_meta"`
+	Title            models.JSON        `json:"title"`
+	Description      models.JSON        `json:"description"`
+	Content          models.JSON        `json:"content"`
+	Images           models.StringArray `json:"images"`
+	Tags             models.StringArray `json:"tags"`
+	PriceAmount      string             `json:"price_amount"`
+	FulfillmentType  string             `json:"fulfillment_type"`
+	ManualFormSchema models.JSON        `json:"manual_form_schema"`
+	IsActive         bool               `json:"is_active"`
+	CategoryID       uint               `json:"category_id"`
+	SKUs             []upstreamSKU      `json:"skus"`
+	CreatedAt        time.Time          `json:"created_at"`
+	UpdatedAt        time.Time          `json:"updated_at"`
 }
 
 type upstreamSKU struct {
-	ID          uint        `json:"id"`
-	SKUCode     string      `json:"sku_code"`
-	SpecValues  models.JSON `json:"spec_values"`
-	PriceAmount string      `json:"price_amount"`
-	StockStatus string      `json:"stock_status"`
-	IsActive    bool        `json:"is_active"`
+	ID            uint        `json:"id"`
+	SKUCode       string      `json:"sku_code"`
+	SpecValues    models.JSON `json:"spec_values"`
+	PriceAmount   string      `json:"price_amount"`
+	StockStatus   string      `json:"stock_status"`
+	StockQuantity int         `json:"stock_quantity"`
+	IsActive      bool        `json:"is_active"`
 }
 
 // ListProducts GET /api/v1/upstream/products
@@ -166,6 +170,9 @@ func (h *Handler) ListProducts(c *gin.Context) {
 		logger.Warnw("upstream_apply_stock_counts_failed", "error", err)
 	}
 
+	// 补充上游对接商品的 SKU 库存
+	h.applyUpstreamStockToProducts(products)
+
 	items := make([]upstreamProduct, 0, len(products))
 	for _, p := range products {
 		items = append(items, toUpstreamProduct(p))
@@ -173,7 +180,7 @@ func (h *Handler) ListProducts(c *gin.Context) {
 
 	successResponse(c, gin.H{
 		"ok":        true,
-		"products":  items,
+		"items":     items,
 		"total":     total,
 		"page":      page,
 		"page_size": pageSize,
@@ -209,6 +216,9 @@ func (h *Handler) GetProduct(c *gin.Context) {
 	if err := h.ProductService.ApplyAutoStockCounts(products); err != nil {
 		logger.Warnw("upstream_apply_stock_counts_failed", "error", err)
 	}
+
+	// 补充上游对接商品的 SKU 库存
+	h.applyUpstreamStockToProducts(products)
 
 	successResponse(c, gin.H{
 		"ok":      true,
@@ -289,7 +299,7 @@ func (h *Handler) CreateOrder(c *gin.Context) {
 		return
 	}
 
-	// 创建下游订单引用记录
+	// 创建下游订单引用记录（用于回调通知下游）
 	ref := &models.DownstreamOrderRef{
 		OrderID:           order.ID,
 		ApiCredentialID:   credentialID,
@@ -301,9 +311,18 @@ func (h *Handler) CreateOrder(c *gin.Context) {
 	if createErr := h.downstreamRefRepo.Create(ref); createErr != nil {
 		logger.Errorw("upstream_create_downstream_ref_failed",
 			"order_id", order.ID,
+			"credential_id", credentialID,
+			"downstream_order_no", req.DownstreamOrderNo,
+			"callback_url", req.CallbackURL,
+			"trace_id", req.TraceID,
 			"error", createErr,
 		)
-		// 不回滚订单，仅记录错误
+	} else {
+		logger.Infow("upstream_downstream_ref_created",
+			"ref_id", ref.ID,
+			"order_id", order.ID,
+			"callback_url", req.CallbackURL,
+		)
 	}
 
 	// 自动使用钱包余额支付（上游 API 订单默认钱包扣款）
@@ -384,13 +403,23 @@ func (h *Handler) GetOrder(c *gin.Context) {
 		"currency": order.Currency,
 	}
 
-	// 若已交付，返回交付信息
-	if order.Fulfillment != nil && order.Fulfillment.Status == constants.FulfillmentStatusDelivered {
+	// 若已交付，返回交付信息（优先使用订单自身的 fulfillment，否则从子订单获取）
+	sourceFulfillment := order.Fulfillment
+	if sourceFulfillment == nil && len(order.Children) > 0 {
+		for i := range order.Children {
+			if order.Children[i].Fulfillment != nil {
+				sourceFulfillment = order.Children[i].Fulfillment
+				break
+			}
+		}
+	}
+	if sourceFulfillment != nil && sourceFulfillment.Status == constants.FulfillmentStatusDelivered {
 		resp["fulfillment"] = gin.H{
-			"type":         order.Fulfillment.Type,
-			"status":       order.Fulfillment.Status,
-			"payload":      order.Fulfillment.Payload,
-			"delivered_at": order.Fulfillment.DeliveredAt,
+			"type":          sourceFulfillment.Type,
+			"status":        sourceFulfillment.Status,
+			"payload":       sourceFulfillment.Payload,
+			"delivery_data": sourceFulfillment.LogisticsJSON,
+			"delivered_at":  sourceFulfillment.DeliveredAt,
 		}
 	}
 
@@ -462,10 +491,11 @@ type callbackPayload struct {
 	DownstreamOrderNo string `json:"downstream_order_no"`
 	Status            string `json:"status"`
 	Fulfillment       *struct {
-		Type        string     `json:"type"`
-		Status      string     `json:"status"`
-		Payload     string     `json:"payload"`
-		DeliveredAt *time.Time `json:"delivered_at"`
+		Type         string      `json:"type"`
+		Status       string      `json:"status"`
+		Payload      string      `json:"payload"`
+		DeliveryData models.JSON `json:"delivery_data"`
+		DeliveredAt  *time.Time  `json:"delivered_at"`
 	} `json:"fulfillment,omitempty"`
 	Timestamp int64 `json:"timestamp"`
 }
@@ -562,10 +592,11 @@ func (h *Handler) HandleCallback(c *gin.Context) {
 	var uf *upstreamadapter.UpstreamFulfillment
 	if payload.Fulfillment != nil {
 		uf = &upstreamadapter.UpstreamFulfillment{
-			Type:        payload.Fulfillment.Type,
-			Status:      payload.Fulfillment.Status,
-			Payload:     payload.Fulfillment.Payload,
-			DeliveredAt: payload.Fulfillment.DeliveredAt,
+			Type:         payload.Fulfillment.Type,
+			Status:       payload.Fulfillment.Status,
+			Payload:      payload.Fulfillment.Payload,
+			DeliveryData: payload.Fulfillment.DeliveryData,
+			DeliveredAt:  payload.Fulfillment.DeliveredAt,
 		}
 	}
 
@@ -612,69 +643,106 @@ func mapCallbackStatus(status string) string {
 
 // ---- helpers ----
 
+// applyUpstreamStockToProducts 为 upstream 类型商品的 SKU 填充上游库存数据
+// 从 SKU 映射中读取 UpstreamStock，写入 ProductSKU 的虚拟字段，供 computeSKUStock 使用
+func (h *Handler) applyUpstreamStockToProducts(products []models.Product) {
+	for i := range products {
+		p := &products[i]
+		if p.FulfillmentType != constants.FulfillmentTypeUpstream {
+			continue
+		}
+		for j := range p.SKUs {
+			sku := &p.SKUs[j]
+			mapping, err := h.SKUMappingRepo.GetByLocalSKUID(sku.ID)
+			if err != nil || mapping == nil {
+				sku.UpstreamStock = 0
+				continue
+			}
+			sku.UpstreamStock = mapping.UpstreamStock
+		}
+	}
+}
+
 func toUpstreamProduct(p models.Product) upstreamProduct {
 	skus := make([]upstreamSKU, 0, len(p.SKUs))
 	for _, s := range p.SKUs {
 		if !s.IsActive {
 			continue
 		}
+		stockStatus, stockQuantity := computeSKUStock(p, s)
 		skus = append(skus, upstreamSKU{
-			ID:          s.ID,
-			SKUCode:     s.SKUCode,
-			SpecValues:  s.SpecValuesJSON,
-			PriceAmount: s.PriceAmount.StringFixed(2),
-			StockStatus: computeSKUStockStatus(p, s),
-			IsActive:    s.IsActive,
+			ID:            s.ID,
+			SKUCode:       s.SKUCode,
+			SpecValues:    s.SpecValuesJSON,
+			PriceAmount:   s.PriceAmount.StringFixed(2),
+			StockStatus:   stockStatus,
+			StockQuantity: stockQuantity,
+			IsActive:      s.IsActive,
 		})
 	}
 
 	return upstreamProduct{
-		ID:              p.ID,
-		Slug:            p.Slug,
-		Title:           p.TitleJSON,
-		Description:     p.DescriptionJSON,
-		Images:          p.Images,
-		Tags:            p.Tags,
-		PriceAmount:     p.PriceAmount.StringFixed(2),
-		FulfillmentType: p.FulfillmentType,
-		IsActive:        p.IsActive,
-		CategoryID:      p.CategoryID,
-		SKUs:            skus,
-		CreatedAt:       p.CreatedAt,
-		UpdatedAt:       p.UpdatedAt,
+		ID:               p.ID,
+		Slug:             p.Slug,
+		SeoMeta:          p.SeoMetaJSON,
+		Title:            p.TitleJSON,
+		Description:      p.DescriptionJSON,
+		Content:          p.ContentJSON,
+		Images:           p.Images,
+		Tags:             p.Tags,
+		PriceAmount:      p.PriceAmount.StringFixed(2),
+		FulfillmentType:  p.FulfillmentType,
+		ManualFormSchema: p.ManualFormSchemaJSON,
+		IsActive:         p.IsActive,
+		CategoryID:       p.CategoryID,
+		SKUs:             skus,
+		CreatedAt:        p.CreatedAt,
+		UpdatedAt:        p.UpdatedAt,
 	}
 }
 
-// computeSKUStockStatus 计算 SKU 的库存状态（不暴露精确数字）
-func computeSKUStockStatus(p models.Product, s models.ProductSKU) string {
+// computeSKUStock 计算 SKU 的库存状态和实际可用量
+func computeSKUStock(p models.Product, s models.ProductSKU) (status string, quantity int) {
 	if p.FulfillmentType == constants.FulfillmentTypeManual {
-		// 手动交付：根据手动库存判断
-		if p.ManualStockTotal < 0 {
-			// 无限库存
-			return "in_stock"
+		// 手动交付：根据 SKU 级别手动库存判断
+		skuTotal := s.ManualStockTotal
+		if skuTotal == constants.ManualStockUnlimited {
+			return constants.ProductStockStatusUnlimited, -1
 		}
-		available := p.ManualStockTotal - p.ManualStockLocked
+		available := skuTotal - s.ManualStockLocked
 		if available <= 0 {
-			return "out_of_stock"
+			return constants.ProductStockStatusOutOfStock, 0
 		}
 		if available <= 20 {
-			return "low_stock"
+			return constants.ProductStockStatusLowStock, available
 		}
-		return "in_stock"
+		return constants.ProductStockStatusInStock, available
+	}
+
+	if p.FulfillmentType == constants.FulfillmentTypeUpstream {
+		// 上游对接商品：使用 SKU 映射中的上游库存（通过虚拟字段 UpstreamStock 传入）
+		available := s.UpstreamStock
+		if available < 0 {
+			return constants.ProductStockStatusUnlimited, -1
+		}
+		if available == 0 {
+			return constants.ProductStockStatusOutOfStock, 0
+		}
+		if available <= 20 {
+			return constants.ProductStockStatusLowStock, available
+		}
+		return constants.ProductStockStatusInStock, available
 	}
 
 	// 自动发货：根据卡密库存判断
-	available := s.AutoStockAvailable
-	if available > 100 {
-		return "in_stock"
+	available := int(s.AutoStockAvailable)
+	if available <= 0 {
+		return constants.ProductStockStatusOutOfStock, 0
 	}
-	if available > 0 {
-		if available <= 20 {
-			return "low_stock"
-		}
-		return "in_stock"
+	if available <= 20 {
+		return constants.ProductStockStatusLowStock, available
 	}
-	return "out_of_stock"
+	return constants.ProductStockStatusInStock, available
 }
 
 // mapOrderErrorToResponse 将订单创建错误映射为上游 API 错误响应

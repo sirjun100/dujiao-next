@@ -110,7 +110,8 @@ func (s *OrderService) buildOrderResult(input orderCreateParams) (*orderBuildRes
 
 		manualSchemaSnapshot := models.JSON{}
 		manualSubmission := models.JSON{}
-		if fulfillmentType == constants.FulfillmentTypeManual {
+		if fulfillmentType == constants.FulfillmentTypeManual ||
+			(fulfillmentType == constants.FulfillmentTypeUpstream && len(product.ManualFormSchemaJSON) > 0) {
 			submission := resolveManualFormSubmission(manualFormData, product.ID, sku.ID)
 			normalizedSchema, normalizedSubmission, err := validateAndNormalizeManualForm(product.ManualFormSchemaJSON, submission)
 			if err != nil {

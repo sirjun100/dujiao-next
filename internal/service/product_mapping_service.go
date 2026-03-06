@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -91,6 +92,9 @@ func (s *ProductMappingService) ImportUpstreamProduct(connectionID uint, upstrea
 	// 下载图片到本地
 	localImages := s.downloadImages(ctx, adapter, upProduct.Images)
 
+	// 下载 Content 中引用的图片
+	localContent := s.downloadContentImages(ctx, adapter, upProduct.Content)
+
 	// 确定交付类型：上游商品映射后统一使用 upstream 类型
 	fulfillmentType := constants.FulfillmentTypeUpstream
 
@@ -106,13 +110,19 @@ func (s *ProductMappingService) ImportUpstreamProduct(connectionID uint, upstrea
 		}
 	}
 
+	// 自动生成 slug（如果未提供）
+	if slug == "" {
+		slug = fmt.Sprintf("upstream-%d-%d-%d", connectionID, upstreamProductID, time.Now().UnixMilli())
+	}
+
 	// 创建本地商品
 	product := models.Product{
 		CategoryID:           categoryID,
 		Slug:                 slug,
+		SeoMetaJSON:          upProduct.SeoMeta,
 		TitleJSON:            upProduct.Title,
 		DescriptionJSON:      upProduct.Description,
-		ContentJSON:          upProduct.Content,
+		ContentJSON:          localContent,
 		ManualFormSchemaJSON: upProduct.ManualFormSchema,
 		PriceAmount:          models.NewMoneyFromDecimal(priceAmount.Round(2)),
 		Images:               models.StringArray(localImages),
@@ -256,7 +266,69 @@ func (s *ProductMappingService) downloadImages(ctx context.Context, adapter upst
 	return localImages
 }
 
-// SyncProduct 同步单个映射商品的上游数据
+// downloadContentImages 下载多语言 Content 中的图片并替换 URL
+func (s *ProductMappingService) downloadContentImages(ctx context.Context, adapter upstream.Adapter, content models.JSON) models.JSON {
+	if len(content) == 0 {
+		return content
+	}
+
+	// models.JSON 是 map[string]interface{}，值为各语言的 Markdown 文本
+	imgRegex := regexp.MustCompile(`!\[[^\]]*\]\(([^)]+)\)|<img[^>]+src=["']([^"']+)["']`)
+	downloaded := make(map[string]string) // originalURL -> localPath
+
+	// 第一遍：收集所有唯一图片 URL
+	for _, val := range content {
+		text, ok := val.(string)
+		if !ok || text == "" {
+			continue
+		}
+		matches := imgRegex.FindAllStringSubmatch(text, -1)
+		for _, m := range matches {
+			url := m[1]
+			if url == "" {
+				url = m[2]
+			}
+			if url == "" || strings.HasPrefix(url, "/uploads/") {
+				continue
+			}
+			downloaded[url] = "" // 占位
+		}
+	}
+
+	if len(downloaded) == 0 {
+		return content
+	}
+
+	// 下载图片
+	for url := range downloaded {
+		localPath, err := adapter.DownloadImage(ctx, url)
+		if err != nil {
+			downloaded[url] = url // 失败保留原始
+		} else {
+			downloaded[url] = localPath
+		}
+	}
+
+	// 第二遍：替换所有语言文本中的 URL
+	result := make(models.JSON, len(content))
+	for lang, val := range content {
+		text, ok := val.(string)
+		if !ok {
+			result[lang] = val
+			continue
+		}
+		for original, local := range downloaded {
+			if original != local {
+				text = strings.ReplaceAll(text, original, local)
+			}
+		}
+		result[lang] = text
+	}
+
+	return result
+}
+
+// SyncProduct 同步单个映射商品的上游数据（全量同步）
 func (s *ProductMappingService) SyncProduct(mappingID uint) error {
 	mapping, err := s.mappingRepo.GetByID(mappingID)
 	if err != nil {
@@ -287,48 +359,120 @@ func (s *ProductMappingService) SyncProduct(mappingID uint) error {
 		return fmt.Errorf("fetch upstream product: %w", err)
 	}
 
-	// 更新 SKU 映射的价格和库存信息
+	now := time.Now()
+
+	// ── 1. 同步本地商品字段（表单配置、上下架状态） ──
+	localProduct, err := s.productRepo.GetByID(strconv.FormatUint(uint64(mapping.LocalProductID), 10))
+	if err != nil {
+		return fmt.Errorf("get local product: %w", err)
+	}
+	if localProduct != nil {
+		changed := false
+
+		// 同步人工交付表单配置
+		if upProduct.ManualFormSchema != nil {
+			localProduct.ManualFormSchemaJSON = upProduct.ManualFormSchema
+			changed = true
+		}
+
+		// 如果上游商品已下架，本地也自动下架（但上游上架不自动上架，留给管理员决定）
+		if !upProduct.IsActive && localProduct.IsActive {
+			localProduct.IsActive = false
+			changed = true
+		}
+
+		if changed {
+			_ = s.productRepo.Update(localProduct)
+		}
+	}
+
+	// ── 2. 同步 SKU：新增 / 更新 / 停用 ──
 	skuMappings, err := s.skuMappingRepo.ListByProductMapping(mappingID)
 	if err != nil {
 		return err
 	}
 
+	// 构建上游 SKU 查找表
 	upstreamSKUMap := make(map[uint]upstream.UpstreamSKU, len(upProduct.SKUs))
 	for _, us := range upProduct.SKUs {
 		upstreamSKUMap[us.ID] = us
 	}
 
-	now := time.Now()
+	// 构建已有映射查找表（按上游 SKU ID）
+	existingByUpstreamID := make(map[uint]*models.SKUMapping, len(skuMappings))
+	for i := range skuMappings {
+		existingByUpstreamID[skuMappings[i].UpstreamSKUID] = &skuMappings[i]
+	}
+
+	// 2a. 更新已有映射 + 同步本地 SKU
 	for i := range skuMappings {
 		upSKU, ok := upstreamSKUMap[skuMappings[i].UpstreamSKUID]
 		if !ok {
+			// 上游 SKU 已删除 → 停用本地 SKU 和映射
 			skuMappings[i].UpstreamIsActive = false
+			skuMappings[i].UpstreamStock = 0
 			skuMappings[i].StockSyncedAt = &now
 			_ = s.skuMappingRepo.Update(&skuMappings[i])
+
+			// 停用本地 SKU
+			localSKU, _ := s.productSKURepo.GetByID(skuMappings[i].LocalSKUID)
+			if localSKU != nil && localSKU.IsActive {
+				localSKU.IsActive = false
+				_ = s.productSKURepo.Update(localSKU)
+			}
 			continue
 		}
 
 		upPrice, _ := decimal.NewFromString(upSKU.PriceAmount)
+
+		// 更新 SKU 映射记录
 		skuMappings[i].UpstreamPrice = models.NewMoneyFromDecimal(upPrice.Round(2))
 		skuMappings[i].UpstreamIsActive = upSKU.IsActive
 		skuMappings[i].StockSyncedAt = &now
-
-		// 解析库存状态
-		switch upSKU.StockStatus {
-		case constants.ProductStockStatusOutOfStock:
-			skuMappings[i].UpstreamStock = 0
-		case constants.ProductStockStatusUnlimited:
-			skuMappings[i].UpstreamStock = -1
-		case constants.ProductStockStatusInStock:
-			skuMappings[i].UpstreamStock = 999 // 有库存但不知道具体数量
-		case constants.ProductStockStatusLowStock:
-			skuMappings[i].UpstreamStock = 1
-		}
-
+		skuMappings[i].UpstreamStock = upSKU.StockQuantity
 		_ = s.skuMappingRepo.Update(&skuMappings[i])
+
+		// 同步本地 SKU 字段
+		localSKU, _ := s.productSKURepo.GetByID(skuMappings[i].LocalSKUID)
+		if localSKU != nil {
+			localSKU.SpecValuesJSON = upSKU.SpecValues
+			localSKU.IsActive = upSKU.IsActive
+			_ = s.productSKURepo.Update(localSKU)
+		}
 	}
 
-	// 更新同步时间
+	// 2b. 上游新增的 SKU → 创建本地 SKU + 映射
+	for _, upSKU := range upProduct.SKUs {
+		if _, exists := existingByUpstreamID[upSKU.ID]; exists {
+			continue
+		}
+
+		skuPrice, _ := decimal.NewFromString(upSKU.PriceAmount)
+		newLocalSKU := models.ProductSKU{
+			ProductID:      mapping.LocalProductID,
+			SKUCode:        upSKU.SKUCode,
+			SpecValuesJSON: upSKU.SpecValues,
+			PriceAmount:    models.NewMoneyFromDecimal(skuPrice.Round(2)),
+			IsActive:       upSKU.IsActive,
+			SortOrder:      0,
+		}
+		if err := s.productSKURepo.Create(&newLocalSKU); err != nil {
+			continue
+		}
+
+		newMapping := &models.SKUMapping{
+			ProductMappingID: mappingID,
+			LocalSKUID:       newLocalSKU.ID,
+			UpstreamSKUID:    upSKU.ID,
+			UpstreamPrice:    models.NewMoneyFromDecimal(skuPrice.Round(2)),
+			UpstreamIsActive: upSKU.IsActive,
+			UpstreamStock:    upSKU.StockQuantity,
+			StockSyncedAt:    &now,
+		}
+		_ = s.skuMappingRepo.Create(newMapping)
+	}
+
+	// ── 3. 更新同步时间 ──
 	mapping.LastSyncedAt = &now
 	return s.mappingRepo.Update(mapping)
 }

@@ -135,7 +135,8 @@ func (c *Client) EnqueueProcurementSubmit(payload ProcurementSubmitPayload, opts
 	if err != nil {
 		return err
 	}
-	options := append([]asynq.Option{asynq.Queue(c.defaultQueue)}, opts...)
+	// 采购单服务自行管理重试逻辑，asynq 仅处理瞬态错误（DB/Redis 不可达等）
+	options := append([]asynq.Option{asynq.Queue(c.defaultQueue), asynq.MaxRetry(3)}, opts...)
 	_, err = c.client.Enqueue(task, options...)
 	return err
 }

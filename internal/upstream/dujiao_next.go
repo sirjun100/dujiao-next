@@ -71,11 +71,14 @@ func (a *DujiaoNextAdapter) ListProducts(ctx context.Context, opts ListProductsO
 // GetProduct 获取单个商品详情
 func (a *DujiaoNextAdapter) GetProduct(ctx context.Context, productID uint) (*UpstreamProduct, error) {
 	path := fmt.Sprintf("/api/v1/upstream/products/%d", productID)
-	var result UpstreamProduct
+	var result struct {
+		OK      bool            `json:"ok"`
+		Product UpstreamProduct `json:"product"`
+	}
 	if err := a.doRequest(ctx, http.MethodGet, path, nil, &result); err != nil {
 		return nil, err
 	}
-	return &result, nil
+	return &result.Product, nil
 }
 
 // CreateOrder 发起采购单
@@ -114,7 +117,13 @@ func (a *DujiaoNextAdapter) CancelOrder(ctx context.Context, orderID uint) error
 
 // DownloadImage 下载图片到本地
 func (a *DujiaoNextAdapter) DownloadImage(ctx context.Context, imageURL string) (string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, imageURL, nil)
+	// 相对路径转绝对 URL
+	fullURL := imageURL
+	if strings.HasPrefix(imageURL, "/") {
+		fullURL = a.baseURL + imageURL
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fullURL, nil)
 	if err != nil {
 		return "", fmt.Errorf("create download request: %w", err)
 	}

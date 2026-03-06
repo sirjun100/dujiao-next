@@ -95,7 +95,7 @@ func (r *GormProductMappingRepository) List(filter ProductMappingListFilter) ([]
 		return nil, 0, err
 	}
 
-	q = q.Preload("Connection").Preload("Product").Order("created_at DESC")
+	q = q.Preload("Connection").Preload("Product").Preload("Product.SKUs").Order("created_at DESC")
 	if filter.Page > 0 && filter.PageSize > 0 {
 		q = q.Offset((filter.Page - 1) * filter.PageSize).Limit(filter.PageSize)
 	}
