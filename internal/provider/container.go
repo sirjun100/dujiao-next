@@ -52,6 +52,7 @@ type Container struct {
 	ReconciliationJobRepo  repository.ReconciliationJobRepository
 	ReconciliationItemRepo repository.ReconciliationItemRepository
 	ChannelClientRepo      repository.ChannelClientRepository
+	TelegramBroadcastRepo  repository.TelegramBroadcastRepository
 
 	// Services
 	AuthzService              *authz.Service
@@ -87,6 +88,7 @@ type Container struct {
 	DownstreamCallbackService *service.DownstreamCallbackService
 	ReconciliationService     *service.ReconciliationService
 	ChannelClientService      *service.ChannelClientService
+	TelegramBroadcastService  *service.TelegramBroadcastService
 }
 
 // NewContainer 初始化容器
@@ -158,6 +160,7 @@ func (c *Container) initRepositories() {
 	c.ReconciliationJobRepo = repository.NewReconciliationJobRepository(db)
 	c.ReconciliationItemRepo = repository.NewReconciliationItemRepository(db)
 	c.ChannelClientRepo = repository.NewChannelClientRepository(db)
+	c.TelegramBroadcastRepo = repository.NewTelegramBroadcastRepository(db)
 }
 
 func (c *Container) initServices() {
@@ -260,6 +263,14 @@ func (c *Container) initServices() {
 		c.SiteConnectionService, c.QueueClient, c.NotificationService,
 	)
 	c.ChannelClientService = service.NewChannelClientService(c.ChannelClientRepo, c.Config.App.SecretKey)
+	c.TelegramBroadcastService = service.NewTelegramBroadcastService(
+		c.TelegramBroadcastRepo,
+		c.UserOAuthIdentityRepo,
+		c.ChannelClientRepo,
+		c.ChannelClientService,
+		c.QueueClient,
+		service.NewTelegramNotifyService(c.SettingService, c.Config.TelegramAuth),
+	)
 	c.PaymentService.SetProcurementService(c.ProcurementOrderService)
 	c.PaymentService.SetDownstreamCallbackService(c.DownstreamCallbackService)
 	c.FulfillmentService.SetDownstreamCallbackService(c.DownstreamCallbackService)

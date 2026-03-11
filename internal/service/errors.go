@@ -151,4 +151,8 @@ var (
 	ErrChannelClientDisabled           = errors.New("channel client disabled")
 	ErrChannelSignatureInvalid         = errors.New("channel signature invalid")
 	ErrChannelTimestampExpired         = errors.New("channel timestamp expired")
+	ErrTelegramBroadcastInvalid        = errors.New("telegram broadcast invalid")
+	ErrTelegramBroadcastNotFound       = errors.New("telegram broadcast not found")
+	ErrTelegramBroadcastNoRecipients   = errors.New("telegram broadcast no recipients")
+	ErrTelegramBotTokenUnavailable     = errors.New("telegram bot token unavailable")
 )

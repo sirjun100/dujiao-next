@@ -200,6 +200,20 @@ func (c *Client) EnqueueBotNotify(payload BotNotifyPayload, opts ...asynq.Option
 	return err
 }
 
+// EnqueueTelegramBroadcast 入队 Telegram 群发任务。
+func (c *Client) EnqueueTelegramBroadcast(payload TelegramBroadcastPayload, opts ...asynq.Option) error {
+	if !c.Enabled() {
+		return nil
+	}
+	task, err := NewTelegramBroadcastTask(payload)
+	if err != nil {
+		return err
+	}
+	options := append([]asynq.Option{asynq.Queue(c.defaultQueue), asynq.MaxRetry(3)}, opts...)
+	_, err = c.client.Enqueue(task, options...)
+	return err
+}
+
 // BuildServerConfig 生成队列服务配置
 func BuildServerConfig(cfg *config.QueueConfig) (asynq.RedisClientOpt, asynq.Config) {
 	opt := buildRedisOpt(cfg)

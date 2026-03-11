@@ -18,6 +18,16 @@ type telegramSendMessageResponse struct {
 	Description string `json:"description"`
 }
 
+// TelegramSendOptions Telegram 发送参数。
+type TelegramSendOptions struct {
+	ChatID                string
+	Message               string
+	ParseMode             string
+	DisableWebPagePreview bool
+	AttachmentURL         string
+	AttachmentDisplayName string
+}
+
 // TelegramNotifyService Telegram 通知发送服务
 type TelegramNotifyService struct {
 	settingService *SettingService
@@ -38,11 +48,6 @@ func NewTelegramNotifyService(settingService *SettingService, defaultCfg config.
 
 // SendMessage 发送 Telegram 消息
 func (s *TelegramNotifyService) SendMessage(ctx context.Context, chatID, message string) error {
-	chatID = strings.TrimSpace(chatID)
-	message = strings.TrimSpace(message)
-	if chatID == "" || message == "" {
-		return ErrNotificationSendFailed
-	}
 	token, err := s.resolveBotToken()
 	if err != nil {
 		return err
@@ -50,18 +55,52 @@ func (s *TelegramNotifyService) SendMessage(ctx context.Context, chatID, message
 	if token == "" {
 		return ErrNotificationConfigInvalid
 	}
+	return s.SendWithBotToken(ctx, token, TelegramSendOptions{
+		ChatID:                chatID,
+		Message:               message,
+		DisableWebPagePreview: true,
+	})
+}
 
-	payloadMap := map[string]interface{}{
+// SendWithBotToken 使用显式 bot token 发送 Telegram 消息。
+func (s *TelegramNotifyService) SendWithBotToken(ctx context.Context, botToken string, options TelegramSendOptions) error {
+	chatID := strings.TrimSpace(options.ChatID)
+	message := strings.TrimSpace(options.Message)
+	botToken = strings.TrimSpace(botToken)
+	if chatID == "" || message == "" || botToken == "" {
+		return ErrNotificationSendFailed
+	}
+
+	if strings.TrimSpace(options.AttachmentURL) != "" {
+		payload := map[string]interface{}{
+			"chat_id":  chatID,
+			"document": strings.TrimSpace(options.AttachmentURL),
+			"caption":  message,
+		}
+		if parseMode := strings.TrimSpace(options.ParseMode); parseMode != "" {
+			payload["parse_mode"] = parseMode
+		}
+		return s.sendJSONRequest(ctx, botToken, "sendDocument", payload)
+	}
+
+	payload := map[string]interface{}{
 		"chat_id":                  chatID,
 		"text":                     message,
-		"disable_web_page_preview": true,
+		"disable_web_page_preview": options.DisableWebPagePreview,
 	}
-	payloadBytes, err := json.Marshal(payloadMap)
+	if parseMode := strings.TrimSpace(options.ParseMode); parseMode != "" {
+		payload["parse_mode"] = parseMode
+	}
+	return s.sendJSONRequest(ctx, botToken, "sendMessage", payload)
+}
+
+func (s *TelegramNotifyService) sendJSONRequest(ctx context.Context, botToken, method string, payload map[string]interface{}) error {
+	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
 		return err
 	}
 
-	requestURL := fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", token)
+	requestURL := fmt.Sprintf("https://api.telegram.org/bot%s/%s", botToken, method)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, requestURL, bytes.NewReader(payloadBytes))
 	if err != nil {
 		return err

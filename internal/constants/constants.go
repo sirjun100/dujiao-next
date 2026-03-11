@@ -291,6 +291,17 @@ const (
 	TaskReconciliationRun           = "reconciliation:run"
 	TaskDownstreamCallback          = "downstream:callback"
 	TaskBotNotify                   = "bot:notify"
+	TaskTelegramBroadcast           = "telegram:broadcast"
+)
+
+// Telegram Bot 群发常量
+const (
+	TelegramBroadcastRecipientTypeAll      = "all"
+	TelegramBroadcastRecipientTypeSpecific = "specific"
+	TelegramBroadcastStatusPending         = "pending"
+	TelegramBroadcastStatusRunning         = "running"
+	TelegramBroadcastStatusCompleted       = "completed"
+	TelegramBroadcastStatusFailed          = "failed"
 )
 
 // 采购单状态常量

@@ -401,6 +401,11 @@ func SetupRouter(cfg *config.Config, c *provider.Container) *gin.Engine {
 				authorized.POST("/channel-clients/:id/reset-secret", adminHandler.ResetChannelClientSecret)
 				authorized.DELETE("/channel-clients/:id", adminHandler.DeleteChannelClient)
 
+				// Telegram Bot 群发
+				authorized.GET("/telegram-bot/broadcasts", adminHandler.ListTelegramBroadcasts)
+				authorized.POST("/telegram-bot/broadcasts", adminHandler.CreateTelegramBroadcast)
+				authorized.GET("/telegram-bot/users", adminHandler.ListTelegramBroadcastUsers)
+
 				// Telegram Bot 设置
 				authorized.GET("/settings/telegram-bot", adminHandler.GetTelegramBotConfig)
 				authorized.PUT("/settings/telegram-bot", adminHandler.UpdateTelegramBotConfig)

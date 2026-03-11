@@ -52,6 +52,7 @@ func (c *Consumer) Register(mux *asynq.ServeMux) {
 	mux.HandleFunc(queue.TaskDownstreamCallback, c.handleDownstreamCallback)
 	mux.HandleFunc(queue.TaskReconciliationRun, c.handleReconciliationRun)
 	mux.HandleFunc(queue.TaskBotNotify, c.handleBotNotify)
+	mux.HandleFunc(queue.TaskTelegramBroadcast, c.handleTelegramBroadcast)
 }
 
 func (c *Consumer) handleOrderStatusEmail(_ context.Context, task *asynq.Task) error {
@@ -507,4 +508,23 @@ func (c *Consumer) handleBotNotify(_ context.Context, task *asynq.Task) error {
 
 	// 5xx 返回 error 触发 asynq 重试
 	return fmt.Errorf("bot notify unexpected status: %d", resp.StatusCode)
+}
+
+func (c *Consumer) handleTelegramBroadcast(ctx context.Context, task *asynq.Task) error {
+	if c == nil || task == nil {
+		return nil
+	}
+	var payload queue.TelegramBroadcastPayload
+	if err := json.Unmarshal(task.Payload(), &payload); err != nil {
+		logger.Warnw("worker_telegram_broadcast_unmarshal_failed", "error", err)
+		return err
+	}
+	if payload.BroadcastID == 0 {
+		logger.Debugw("worker_telegram_broadcast_skip_invalid")
+		return nil
+	}
+	if c.TelegramBroadcastService == nil {
+		return nil
+	}
+	return c.TelegramBroadcastService.ProcessBroadcast(ctx, payload.BroadcastID)
 }

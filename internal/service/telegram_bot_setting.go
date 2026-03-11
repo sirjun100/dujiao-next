@@ -56,12 +56,16 @@ type TelegramBotMenuAction struct {
 
 // TelegramBotRuntimeStatusSetting Telegram Bot 运行时状态
 type TelegramBotRuntimeStatusSetting struct {
-	Connected        bool   `json:"connected"`
-	LastSeenAt       string `json:"last_seen_at"`
-	BotVersion       string `json:"bot_version"`
-	WebhookStatus    string `json:"webhook_status"`
-	ConfigVersion    int    `json:"config_version"`
-	LastConfigSyncAt string `json:"last_config_sync_at"`
+	Connected        bool     `json:"connected"`
+	LastSeenAt       string   `json:"last_seen_at"`
+	BotVersion       string   `json:"bot_version"`
+	WebhookStatus    string   `json:"webhook_status"`
+	MachineCode      string   `json:"machine_code"`
+	LicenseStatus    string   `json:"license_status"`
+	LicenseExpiresAt string   `json:"license_expires_at"`
+	Warnings         []string `json:"warnings"`
+	ConfigVersion    int      `json:"config_version"`
+	LastConfigSyncAt string   `json:"last_config_sync_at"`
 }
 
 // TelegramBotConfigDefault 默认 Bot 配置
@@ -104,6 +108,7 @@ func TelegramBotRuntimeStatusDefault() TelegramBotRuntimeStatusSetting {
 	return TelegramBotRuntimeStatusSetting{
 		Connected:     false,
 		ConfigVersion: 0,
+		Warnings:      []string{},
 	}
 }
 
@@ -192,6 +197,10 @@ func TelegramBotRuntimeStatusToMap(status TelegramBotRuntimeStatusSetting) map[s
 		"last_seen_at":        status.LastSeenAt,
 		"bot_version":         status.BotVersion,
 		"webhook_status":      status.WebhookStatus,
+		"machine_code":        status.MachineCode,
+		"license_status":      status.LicenseStatus,
+		"license_expires_at":  status.LicenseExpiresAt,
+		"warnings":            append([]string(nil), status.Warnings...),
 		"config_version":      status.ConfigVersion,
 		"last_config_sync_at": status.LastConfigSyncAt,
 	}
@@ -265,6 +274,10 @@ func telegramBotRuntimeStatusFromJSON(raw models.JSON, fallback TelegramBotRunti
 	next.LastSeenAt = readString(raw, "last_seen_at", next.LastSeenAt)
 	next.BotVersion = readString(raw, "bot_version", next.BotVersion)
 	next.WebhookStatus = readString(raw, "webhook_status", next.WebhookStatus)
+	next.MachineCode = readString(raw, "machine_code", next.MachineCode)
+	next.LicenseStatus = readString(raw, "license_status", next.LicenseStatus)
+	next.LicenseExpiresAt = readString(raw, "license_expires_at", next.LicenseExpiresAt)
+	next.Warnings = readStringList(raw, "warnings", next.Warnings)
 	next.ConfigVersion = readInt(raw, "config_version", next.ConfigVersion)
 	next.LastConfigSyncAt = readString(raw, "last_config_sync_at", next.LastConfigSyncAt)
 	return next

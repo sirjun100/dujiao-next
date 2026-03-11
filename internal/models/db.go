@@ -118,6 +118,7 @@ func AutoMigrate() error {
 		&ReconciliationJob{},
 		&ReconciliationItem{},
 		&ChannelClient{},
+		&TelegramBroadcast{},
 	); err != nil {
 		return err
 	}

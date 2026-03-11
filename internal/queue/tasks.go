@@ -35,6 +35,8 @@ const (
 	TaskReconciliationRun = constants.TaskReconciliationRun
 	// TaskBotNotify Bot 交付通知任务
 	TaskBotNotify = constants.TaskBotNotify
+	// TaskTelegramBroadcast Telegram 群发任务
+	TaskTelegramBroadcast = constants.TaskTelegramBroadcast
 )
 
 // OrderStatusEmailPayload 订单状态邮件任务载荷
@@ -197,4 +199,18 @@ func NewBotNotifyTask(payload BotNotifyPayload) (*asynq.Task, error) {
 		return nil, err
 	}
 	return asynq.NewTask(TaskBotNotify, body), nil
+}
+
+// TelegramBroadcastPayload Telegram 群发任务载荷。
+type TelegramBroadcastPayload struct {
+	BroadcastID uint `json:"broadcast_id"`
+}
+
+// NewTelegramBroadcastTask 创建 Telegram 群发任务。
+func NewTelegramBroadcastTask(payload TelegramBroadcastPayload) (*asynq.Task, error) {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	return asynq.NewTask(TaskTelegramBroadcast, body), nil
 }

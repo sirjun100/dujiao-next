@@ -42,8 +42,12 @@ func (h *Handler) GetBotConfig(c *gin.Context) {
 }
 
 type reportHeartbeatRequest struct {
-	BotVersion    string `json:"bot_version"`
-	WebhookStatus string `json:"webhook_status"`
+	BotVersion       string   `json:"bot_version"`
+	WebhookStatus    string   `json:"webhook_status"`
+	MachineCode      string   `json:"machine_code"`
+	LicenseStatus    string   `json:"license_status"`
+	LicenseExpiresAt string   `json:"license_expires_at"`
+	Warnings         []string `json:"warnings"`
 }
 
 // ReportHeartbeat POST /api/v1/channel/telegram/heartbeat
@@ -68,6 +72,10 @@ func (h *Handler) ReportHeartbeat(c *gin.Context) {
 		LastSeenAt:       now,
 		BotVersion:       req.BotVersion,
 		WebhookStatus:    req.WebhookStatus,
+		MachineCode:      req.MachineCode,
+		LicenseStatus:    req.LicenseStatus,
+		LicenseExpiresAt: req.LicenseExpiresAt,
+		Warnings:         append([]string(nil), req.Warnings...),
 		ConfigVersion:    current.ConfigVersion,
 		LastConfigSyncAt: current.LastConfigSyncAt,
 	}
