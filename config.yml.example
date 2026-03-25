@@ -69,12 +69,14 @@ upload:
     - image/png
     - image/gif
     - image/webp
+    - image/svg+xml
   allowed_extensions:
     - .jpg
     - .jpeg
     - .png
     - .gif
     - .webp
+    - .svg
   max_width: 4096
   max_height: 4096
 

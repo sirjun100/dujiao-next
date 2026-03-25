@@ -76,6 +76,10 @@ func (s *UploadService) SaveFile(file *multipart.FileHeader, scene string) (stri
 	}
 
 	contentType := http.DetectContentType(buffer)
+	// http.DetectContentType 无法识别 SVG，需根据扩展名和内容特征补充判断
+	if ext == ".svg" && isSVGContent(buffer) {
+		contentType = "image/svg+xml"
+	}
 	if normalizedScene != "telegram" && len(s.cfg.Upload.AllowedTypes) > 0 {
 		allowed := false
 		for _, t := range s.cfg.Upload.AllowedTypes {
@@ -89,7 +93,7 @@ func (s *UploadService) SaveFile(file *multipart.FileHeader, scene string) (stri
 		}
 	}
 
-	if strings.HasPrefix(contentType, "image/") {
+	if strings.HasPrefix(contentType, "image/") && contentType != "image/svg+xml" {
 		if _, err := src.Seek(0, 0); err != nil {
 			return "", err
 		}
@@ -102,6 +106,23 @@ func (s *UploadService) SaveFile(file *multipart.FileHeader, scene string) (stri
 		}
 		if s.cfg.Upload.MaxHeight > 0 && height > s.cfg.Upload.MaxHeight {
 			return "", fmt.Errorf("图片高度超过限制（最大 %d）", s.cfg.Upload.MaxHeight)
+		}
+	}
+
+	// SVG 安全检查：禁止嵌入脚本和外部引用
+	if contentType == "image/svg+xml" {
+		if _, err := src.Seek(0, 0); err != nil {
+			return "", err
+		}
+		svgData, err := io.ReadAll(src)
+		if err != nil {
+			return "", err
+		}
+		if err := validateSVGSafety(svgData); err != nil {
+			return "", err
+		}
+		if _, err := src.Seek(0, 0); err != nil {
+			return "", err
 		}
 	}
 
@@ -180,6 +201,48 @@ func decodeImageDimensions(src io.ReadSeeker, contentType string) (int, int, err
 		return 0, 0, fmt.Errorf("无法解析图片: %w", err)
 	}
 	return cfg.Width, cfg.Height, nil
+}
+
+// isSVGContent 通过文件内容判断是否为 SVG
+func isSVGContent(buf []byte) bool {
+	content := strings.TrimSpace(string(buf))
+	// SVG 文件通常以 XML 声明或 <svg 标签开头
+	return strings.HasPrefix(content, "<?xml") ||
+		strings.HasPrefix(content, "<svg") ||
+		strings.Contains(content, "<svg")
+}
+
+// validateSVGSafety 检查 SVG 内容安全性，禁止脚本和危险元素
+func validateSVGSafety(data []byte) error {
+	content := strings.ToLower(string(data))
+	// 禁止脚本标签
+	if strings.Contains(content, "<script") {
+		return fmt.Errorf("SVG 文件不允许包含 <script> 标签")
+	}
+	// 禁止事件处理属性（onclick, onload, onerror 等）
+	dangerousAttrs := []string{
+		"onload", "onclick", "onerror", "onmouseover", "onmouseout",
+		"onmousemove", "onfocus", "onblur", "onchange", "onsubmit",
+		"onanimationstart", "onanimationend", "onanimationiteration",
+	}
+	for _, attr := range dangerousAttrs {
+		if strings.Contains(content, attr+"=") || strings.Contains(content, attr+" =") {
+			return fmt.Errorf("SVG 文件不允许包含事件处理属性: %s", attr)
+		}
+	}
+	// 禁止 javascript: 协议
+	if strings.Contains(content, "javascript:") {
+		return fmt.Errorf("SVG 文件不允许包含 javascript: 协议")
+	}
+	// 禁止 data: URI（可用于绕过 CSP）
+	if strings.Contains(content, "data:text/html") || strings.Contains(content, "data:application") {
+		return fmt.Errorf("SVG 文件不允许包含危险的 data: URI")
+	}
+	// 禁止 foreignObject（可嵌入 HTML）
+	if strings.Contains(content, "<foreignobject") {
+		return fmt.Errorf("SVG 文件不允许包含 <foreignObject> 元素")
+	}
+	return nil
 }
 
 func decodeWebPDimensions(src io.ReadSeeker) (int, int, error) {
