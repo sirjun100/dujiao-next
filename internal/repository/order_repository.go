@@ -277,16 +277,15 @@ func (r *GormOrderRepository) ListAdmin(filter OrderListFilter) ([]models.Order,
 	}
 
 	var total int64
-	if err := query.Count(&total).Error; err != nil {
+	if err := query.Session(&gorm.Session{}).Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
 
-	query = applyPagination(query, filter.Page, filter.PageSize)
-
-	query = r.withChildren(query.Preload("Items").Preload("Fulfillment"))
+	dataQuery := applyPagination(query.Session(&gorm.Session{}), filter.Page, filter.PageSize)
+	dataQuery = r.withChildren(dataQuery.Preload("Items").Preload("Fulfillment"))
 
 	orderClause := resolveAdminOrderSort(filter.SortBy, filter.SortOrder)
-	if err := query.Order(orderClause).Find(&orders).Error; err != nil {
+	if err := dataQuery.Order(orderClause).Find(&orders).Error; err != nil {
 		return nil, 0, err
 	}
 	return orders, total, nil
