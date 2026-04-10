@@ -71,6 +71,9 @@ func (s *ProductMappingService) SetMediaService(ms *MediaService) {
 
 // ImportUpstreamProduct 从上游导入商品（克隆为本地商品 + 建立映射）
 func (s *ProductMappingService) ImportUpstreamProduct(connectionID uint, upstreamProductID uint, categoryID uint, slug string) (*models.ProductMapping, error) {
+	if categoryID == 0 {
+		return nil, ErrProductCategoryInvalid
+	}
 	if err := validateProductCategoryAssignment(s.categoryRepo, categoryID, 0); err != nil {
 		return nil, err
 	}
@@ -1128,6 +1131,9 @@ func (s *ProductMappingService) BatchImportByCategory(
 				categoryName = n
 			}
 		}
+	}
+	if categoryID == 0 {
+		return nil, ErrProductCategoryInvalid
 	}
 
 	// 逐个导入
